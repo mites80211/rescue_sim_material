@@ -1,0 +1,15 @@
+== State Machines
+- #link("https://github.com/andrew-gresyk/HFSM2")[HFSM2]
+- #link("https://github.com/andrew-gresyk/FFSM2")[FFSM2]
+- #link("https://github.com/boost-ext/sml")[SML]
+
+- #link("https://github.com/ros2")[ROS2]
+- #link("https://docs.ultralytics.com/it/")[YOLO]
+- #link("https://github.com/QKnot/Competitive-Programming/blob/main/cpResources/cpBooks/IntroductiontoAlgorithms4th.pdf")[introduction to Algorithms]
+- #link("https://github.com/QKnot/Competitive-Programming/blob/main/cpResources/cpBooks/CompetitiveProgramming4Book1.pdf")[Competitive Programming]
+- #link("modernrobotics.org")[modern robotics]
+- #link("")[]
+- #link("")[]
+- #link("")[]
+- #link("")[]
+- #link("")[]
