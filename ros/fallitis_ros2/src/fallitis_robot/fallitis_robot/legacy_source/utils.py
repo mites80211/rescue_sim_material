@@ -10,10 +10,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 
 def plot(*args):
+    if plt is None:
+        return
     for arg in args:
         plt.matshow(arg)
     plt.show()

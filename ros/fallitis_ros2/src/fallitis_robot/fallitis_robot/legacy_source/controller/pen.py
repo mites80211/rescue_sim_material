@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .wb import wb
+from .device import Device
 import ctypes
-import os
-import sys
+from typing import Union
 
-if sys.platform == 'linux' or sys.platform == 'linux2':
-    path = os.path.join('lib', 'controller', 'libController.so')
-elif sys.platform == 'win32':
-    path = os.path.join('lib', 'controller', 'Controller.dll')
-elif sys.platform == 'darwin':
-    path = os.path.join('Contents', 'lib', 'controller', 'libController.dylib')
 
-wb = ctypes.cdll.LoadLibrary(os.path.join('/usr/local/webots/', path))
+class Pen(Device):
+    def __init__(self, name: Union[str, int]):
+        super().__init__(name)
 
-if sys.platform == 'win32':
-    ctypes.cdll.LoadLibrary(os.path.join(os.environ['WEBOTS_HOME'], 'lib', 'controller', 'generic_robot_window.dll'))
+    def write(self, write: bool):
+        wb.wb_pen_write(self._tag, 1 if write else 0)
+
+    def setInkColor(self, color: int, density: float):
+        wb.wb_pen_set_ink_color(self._tag, color, ctypes.c_double(density))

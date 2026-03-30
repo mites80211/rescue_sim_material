@@ -12,18 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ctypes
-import os
-import sys
+from .wb import wb
+from .device import Device
+from typing import Union
 
-if sys.platform == 'linux' or sys.platform == 'linux2':
-    path = os.path.join('lib', 'controller', 'libController.so')
-elif sys.platform == 'win32':
-    path = os.path.join('lib', 'controller', 'Controller.dll')
-elif sys.platform == 'darwin':
-    path = os.path.join('Contents', 'lib', 'controller', 'libController.dylib')
 
-wb = ctypes.cdll.LoadLibrary(os.path.join('/usr/local/webots/', path))
+class LED(Device):
+    def __init__(self, name: Union[str, int]):
+        super().__init__(name)
 
-if sys.platform == 'win32':
-    ctypes.cdll.LoadLibrary(os.path.join(os.environ['WEBOTS_HOME'], 'lib', 'controller', 'generic_robot_window.dll'))
+    def set(self, v: Union[bool, int]):
+        self.value = v
+
+    def get(self) -> int:
+        return self.value
+
+    @property
+    def value(self) -> int:
+        return wb.wb_led_get(self._tag)
+
+    @value.setter
+    def value(self, v: Union[bool, int]):
+        if isinstance(v, bool):
+            wb.wb_led_set(self._tag, 1 if v else 0)
+        else:
+            wb.wb_led_set(self._tag, v)

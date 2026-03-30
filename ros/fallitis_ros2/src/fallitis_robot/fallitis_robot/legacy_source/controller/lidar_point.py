@@ -12,18 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ctypes
-import os
-import sys
+import struct
 
-if sys.platform == 'linux' or sys.platform == 'linux2':
-    path = os.path.join('lib', 'controller', 'libController.so')
-elif sys.platform == 'win32':
-    path = os.path.join('lib', 'controller', 'Controller.dll')
-elif sys.platform == 'darwin':
-    path = os.path.join('Contents', 'lib', 'controller', 'libController.dylib')
 
-wb = ctypes.cdll.LoadLibrary(os.path.join('/usr/local/webots/', path))
-
-if sys.platform == 'win32':
-    ctypes.cdll.LoadLibrary(os.path.join(os.environ['WEBOTS_HOME'], 'lib', 'controller', 'generic_robot_window.dll'))
+class LidarPoint:
+    def __init__(self, data: bytes, offset):
+        t = struct.unpack_from('fffif', data, offset * 20)
+        self.x = t[0]
+        self.y = t[1]
+        self.z = t[2]
+        self.layer = t[3]
+        self.time = t[4]

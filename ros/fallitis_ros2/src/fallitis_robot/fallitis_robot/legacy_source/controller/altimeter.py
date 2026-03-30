@@ -12,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .sensor import Sensor
+from .wb import wb
 import ctypes
-import os
-import sys
+import typing
 
-if sys.platform == 'linux' or sys.platform == 'linux2':
-    path = os.path.join('lib', 'controller', 'libController.so')
-elif sys.platform == 'win32':
-    path = os.path.join('lib', 'controller', 'Controller.dll')
-elif sys.platform == 'darwin':
-    path = os.path.join('Contents', 'lib', 'controller', 'libController.dylib')
 
-wb = ctypes.cdll.LoadLibrary(os.path.join('/usr/local/webots/', path))
+class Altimeter(Sensor):
+    wb.wb_altimeter_get_value.restype = ctypes.c_double
 
-if sys.platform == 'win32':
-    ctypes.cdll.LoadLibrary(os.path.join(os.environ['WEBOTS_HOME'], 'lib', 'controller', 'generic_robot_window.dll'))
+    def __init__(self, name: typing.Union[str, int], sampling_period: int = None):
+        self._enable = wb.wb_altimeter_enable
+        self._get_sampling_period = wb.wb_altimeter_get_sampling_period
+        super().__init__(name, sampling_period)
+
+    def getValue(self) -> float:
+        return self.value
+
+    @property
+    def value(self) -> float:
+        return wb.wb_altimeter_get_value(self._tag)

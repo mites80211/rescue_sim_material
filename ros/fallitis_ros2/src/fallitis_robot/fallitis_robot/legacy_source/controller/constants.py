@@ -13,17 +13,11 @@
 # limitations under the License.
 
 import ctypes
-import os
-import sys
+from .wb import wb
 
-if sys.platform == 'linux' or sys.platform == 'linux2':
-    path = os.path.join('lib', 'controller', 'libController.so')
-elif sys.platform == 'win32':
-    path = os.path.join('lib', 'controller', 'Controller.dll')
-elif sys.platform == 'darwin':
-    path = os.path.join('Contents', 'lib', 'controller', 'libController.dylib')
 
-wb = ctypes.cdll.LoadLibrary(os.path.join('/usr/local/webots/', path))
-
-if sys.platform == 'win32':
-    ctypes.cdll.LoadLibrary(os.path.join(os.environ['WEBOTS_HOME'], 'lib', 'controller', 'generic_robot_window.dll'))
+def constant(name, type=int):
+    if type == int:
+        return ctypes.c_int.in_dll(wb, 'wb_' + name).value
+    if type == str:
+        return ctypes.c_char_p.in_dll(wb, 'wb_' + name).value.decode()

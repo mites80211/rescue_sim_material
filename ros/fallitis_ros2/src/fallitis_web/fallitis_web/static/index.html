@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fall-Itis Debug Console</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=legacy-ui-20260316b" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar-block">
+          <span class="key-label">Connection</span>
+          <strong id="connection-state">Connecting</strong>
+        </div>
+        <div class="topbar-block">
+          <span class="key-label">Mode</span>
+          <strong id="mode-state">waiting</strong>
+        </div>
+        <div class="topbar-block">
+          <span class="key-label">Pose</span>
+          <strong id="pose-readout">waiting</strong>
+        </div>
+        <div class="topbar-block wide">
+          <span class="key-label">Last Snapshot</span>
+          <strong id="snapshot-state">None</strong>
+        </div>
+      </header>
+
+      <main class="grid">
+        <details class="panel" open>
+          <summary>Controls</summary>
+          <div class="panel-body">
+            <div class="mode-switch" id="mode-switch">
+              <button id="mode-manual" type="button" class="mode-button">Manual</button>
+              <button id="mode-autonomous" type="button" class="mode-button">Autonomous</button>
+            </div>
+
+            <div class="mode-switch" id="recognition-switch">
+              <button id="recognition-off" type="button" class="mode-button">Recognition Off</button>
+              <button id="recognition-on" type="button" class="mode-button">Recognition API</button>
+            </div>
+
+            <div class="keys">
+              <div class="key-row">
+                <button class="key" data-key="w">W</button>
+              </div>
+              <div class="key-row">
+                <button class="key" data-key="a">A</button>
+                <button class="key" data-key="s">S</button>
+                <button class="key" data-key="d">D</button>
+              </div>
+              <div class="key-row">
+                <button class="key lop" data-key="l">L / LoP</button>
+                <button class="key space" data-key="space">Space / Snapshot</button>
+              </div>
+            </div>
+
+            <div class="readout-grid">
+              <div>
+                <span class="key-label">Actuation</span>
+                <pre id="actuation-readout">waiting</pre>
+              </div>
+              <div>
+                <span class="key-label">Perception</span>
+                <pre id="perception-readout">waiting</pre>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="panel map-panel" open>
+          <summary>Map</summary>
+          <div class="panel-body">
+            <div class="toolbar">
+              <button id="zoom-in" type="button">+</button>
+              <button id="zoom-out" type="button">-</button>
+              <button id="zoom-reset" type="button">Reset</button>
+              <label><input id="toggle-raw-trail" type="checkbox" checked /> Pose trail</label>
+              <label><input id="toggle-target" type="checkbox" checked /> Target</label>
+              <label><input id="toggle-marker" type="checkbox" checked /> Robot marker</label>
+            </div>
+            <canvas id="map-canvas" width="960" height="720"></canvas>
+            <pre id="map-readout">waiting</pre>
+          </div>
+        </details>
+
+        <details class="panel" open>
+          <summary>Lidar</summary>
+          <div class="panel-body">
+            <div class="toolbar">
+              <button id="lidar-zoom-in" type="button">+</button>
+              <button id="lidar-zoom-out" type="button">-</button>
+              <button id="lidar-zoom-reset" type="button">Reset</button>
+              <label><input id="toggle-lidar-points" type="checkbox" checked /> Show lidar points</label>
+            </div>
+            <canvas id="lidar-canvas" width="420" height="420"></canvas>
+            <pre id="lidar-readout">waiting</pre>
+          </div>
+        </details>
+
+        <details class="panel" open>
+          <summary>IMU</summary>
+          <div class="panel-body">
+            <div class="toolbar">
+              <button id="imu-view-reset" type="button">Reset view</button>
+            </div>
+            <canvas id="imu-canvas" width="280" height="240"></canvas>
+            <pre id="imu-readout">waiting</pre>
+          </div>
+        </details>
+
+        <details class="panel" open>
+          <summary>Cameras</summary>
+          <div class="panel-body">
+            <div class="camera-grid">
+              <figure>
+                <img id="left-stream" src="/stream/left.mjpg" alt="Left camera stream" />
+                <figcaption>Left camera</figcaption>
+              </figure>
+              <figure>
+                <img id="right-stream" src="/stream/right.mjpg" alt="Right camera stream" />
+                <figcaption>Right camera</figcaption>
+              </figure>
+            </div>
+          </div>
+        </details>
+
+        <details class="panel">
+          <summary>Debug</summary>
+          <div class="panel-body">
+            <pre id="debug-dump">waiting</pre>
+          </div>
+        </details>
+      </main>
+    </div>
+
+    <script src="/assets/app.js?v=legacy-ui-20260316b" defer></script>
+  </body>
+</html>

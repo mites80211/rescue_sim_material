@@ -1,0 +1,270 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #141b24;
+  --panel-alt: #1a2330;
+  --border: #293443;
+  --text: #e6edf3;
+  --muted: #8fa0b3;
+  --accent: #7cc0ff;
+  --accent-2: #9fe870;
+  --warn: #ffb86b;
+  --danger: #ff7f7f;
+  --font-main: "IBM Plex Sans", "Aptos", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Code", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-main);
+}
+
+button,
+input,
+label,
+summary,
+pre,
+figcaption {
+  font-family: var(--font-main);
+}
+
+.app-shell {
+  width: min(1600px, calc(100vw - 20px));
+  margin: 10px auto;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.topbar-block,
+.panel {
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.topbar-block {
+  padding: 10px 12px;
+}
+
+.topbar-block.wide {
+  overflow: hidden;
+}
+
+.topbar-block strong {
+  display: block;
+  font-size: 0.96rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.key-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.55fr) minmax(620px, 1.25fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.panel {
+  overflow: hidden;
+}
+
+.panel summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 12px;
+  background: var(--panel-alt);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-body {
+  padding: 12px;
+}
+
+.map-panel {
+  grid-row: span 2;
+}
+
+.toolbar,
+.readout-grid {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.toolbar label,
+.field span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 260px;
+}
+
+.field.compact {
+  min-width: 110px;
+}
+
+input[type="range"],
+input[type="number"],
+button {
+  background: #0f141b;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+.keys {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  margin-bottom: 12px;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mode-button {
+  min-width: 140px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.82rem;
+}
+
+.mode-button.active {
+  border-color: var(--accent-2);
+  background: #182a1d;
+}
+
+.key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.key {
+  min-width: 90px;
+  min-height: 54px;
+  font-size: 1rem;
+}
+
+.key.active {
+  border-color: var(--accent);
+  background: #182331;
+}
+
+.space {
+  min-width: 180px;
+}
+
+.lop {
+  min-width: 120px;
+}
+
+#map-canvas,
+#lidar-canvas,
+#imu-canvas {
+  width: 100%;
+  background: #091018;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+#map-canvas {
+  min-height: 560px;
+  cursor: grab;
+}
+
+#imu-canvas {
+  cursor: grab;
+}
+
+#map-canvas.dragging,
+#imu-canvas.dragging {
+  cursor: grabbing;
+}
+
+pre {
+  margin: 0;
+  padding: 10px;
+  background: #0d131a;
+  border: 1px solid var(--border);
+  color: #cfd9e3;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.camera-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+figure {
+  margin: 0;
+}
+
+img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  image-rendering: pixelated;
+  transform: scaleY(-1);
+  transform-origin: center;
+  border: 1px solid var(--border);
+  background: #091018;
+}
+
+figcaption {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 1180px) {
+  .grid,
+  .topbar,
+  .camera-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .map-panel {
+    grid-row: auto;
+  }
+}

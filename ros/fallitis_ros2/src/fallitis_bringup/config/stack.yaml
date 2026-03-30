@@ -1,0 +1,33 @@
+fallitis_webots_robot:
+  ros__parameters:
+    time_step_ms: 32
+    max_motor_velocity: 6.28
+    wheel_radius: 0.02
+    axle_length: 0.05
+    command_timeout_s: 0.35
+    camera_publish_period_s: 0.10
+    scan_publish_period_s: 0.10
+    odom_publish_period_s: 0.05
+    wheel_state_publish_period_s: 0.05
+    default_control_mode: "manual"
+    object_recognition_enabled: false
+    object_recognition_api_url: "http://10.0.2.2:8000/predict"
+    object_recognition_api_timeout_s: 2.0
+    object_recognition_api_jpeg_quality: 80
+    object_recognition_conf: 0.65
+    object_recognition_imgsz: 640
+    object_recognition_device: ""
+    object_recognition_period_s: 0.40
+    left_motor_name: "left wheel motor"
+    right_motor_name: "right wheel motor"
+    gps_name: "global positioning system"
+    imu_name: "inertial unit"
+    lidar_name: "lidar"
+    left_camera_name: "left camera"
+    right_camera_name: "right camera"
+    emitter_name: "emitter"
+
+fallitis_web_bridge:
+  ros__parameters:
+    manual_linear_speed_m_s: 0.10
+    manual_angular_speed_rad_s: 2.20

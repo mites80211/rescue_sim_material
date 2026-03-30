@@ -1,81 +1,191 @@
+from __future__ import annotations
+
+import json
 import math
+import os
+from pathlib import Path
+import sys
 import time as ptime
 from collections import deque
 
-from ultralytics import YOLO
-import numpy as np
 import cv2
+from geometry_msgs.msg import Vector3Stamped, Twist
+from nav_msgs.msg import OccupancyGrid as RosOccupancyGrid, Odometry
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image, LaserScan
+from std_msgs.msg import Bool, Empty, String
 
+from fallitis_perception.yolo_api_client import RemoteYoloApiClient
+
+from .config import RobotConfig
+from .geometry import clamp, quaternion_from_yaw
+
+LEGACY_ROOT = Path(__file__).resolve().parent / "legacy_source"
+if str(LEGACY_ROOT) not in sys.path:
+    sys.path.insert(0, str(LEGACY_ROOT))
+
+import constants as const
 import devices
+import erebus
 from robotics.controllers import DifferentialController
 from robotics.localization import GPSInertialLocalization
 from robotics.mapping import OccupancyGrid
 from robotics.pathfinding import construct_path, astar, bfs
-import constants as const
-import erebus
 from utils import (
-    plot,
+    BonusMap,
+    LidarDataProcessor,
+    OccupancyGridViewer,
+    bresenham,
     get_kernel,
     rotate_point,
-    LidarDataProcessor,
-    BonusMap,
-    OccupancyGridViewer,
     sector_crown_mask,
-    bresenham,
 )
 
-model = YOLO(const.MODEL_PATH)
-start_time = ptime.time()
-robot = devices.Robot(time_step=32)
-supervisor = erebus.Supervisor(
-    emitter=devices.Emitter(robot, 'emitter'),
-    receiver=devices.Receiver(robot, 'receiver')
-)
-localization = GPSInertialLocalization(
-    gps=devices.GPS(robot, 'global positioning system'),
-    inertial_unit=devices.InertialUnit(robot, 'inertial unit')
-)
-controller = DifferentialController(
-    localization=localization,
-    left_wheel_motor=devices.Motor(robot, 'left wheel motor'),
-    right_wheel_motor=devices.Motor(robot, 'right wheel motor'),
-    axle_length=0.05, wheel_radius=0.02, max_velocity=6.28,
-    drive_angle_tolerance=math.pi / 6, turn_gain=10
-)
-lidar = devices.Lidar(robot, 'lidar', max_range=0.24)
-distance_sensors = [
-    devices.DistanceSensor(robot, 'left dist sensor', offset=(-0.024, 0, -0.024)),
-    devices.DistanceSensor(robot, 'right dist sensor', offset=(0.024, 0, -0.024)),
-    devices.DistanceSensor(robot, 'front dist sensor', offset=(0, 0, -0.032))
-]
-color_sensor = devices.Camera(robot, 'color sensor')
-left_camera = devices.Camera(robot, 'left camera', offset=(-0.02, 0, 0), time_step=64)
-right_camera = devices.Camera(robot, 'right camera', offset=(0.02, 0, 0), time_step=64)
+os.environ.setdefault("FALLITIS_SHOW_OCCUPANCY", "0")
 
+
+class ModeSwitchInterrupt(RuntimeError):
+    pass
+
+
+bridge: "LegacyBridgeNode | None" = None
+robot = None
+supervisor = None
+localization = None
+controller = None
+lidar = None
+distance_sensors = []
+color_sensor = None
+left_camera = None
+right_camera = None
+occupancy_grid = None
+lidar_processor = None
+bonus_grid = None
+occupancy_viewer = None
+origin = (0.0, 0.0)
+outer_kernel = None
+outer_grid = None
+outer_radius = 0
+inner_kernel = None
+inner_grid = None
+inner_radius = 0
+stuck_mask = None
+visited_mask = None
+visited_grid = None
+hole_mask = None
+path_position = None
+continue_on_left = False
+should_stop_traversing = False
+detected_signs = []
 should_detect_victims = True
-
-
-def raw_step():
-    global should_detect_victims
-    should_detect_victims = not should_detect_victims
-    return robot.step()
-
-
-if raw_step() == -1:
-    exit()
-
 game_score = 0
 game_time = -1
+start_time = 0.0
+step_counter = 0
+runtime_ready = False
+control_mode = "manual"
+current_execution_mode = "manual"
+manual_linear = 0.0
+manual_angular = 0.0
+raw_trail: deque[tuple[float, float]] = deque(maxlen=600)
+object_recognition_enabled = False
+object_recognition_status = "off (API-only path configured)"
+object_recognition_detection_count = 0
+object_recognition_counts: dict[str, int] = {}
+recognition_client: RemoteYoloApiClient | None = None
 
 
-def update_game_information(score, time):
+class LegacyBridgeNode(Node):
+    def __init__(self) -> None:
+        global control_mode, current_execution_mode
+        super().__init__("fallitis_webots_robot")
+        self.config = RobotConfig.from_node(self)
+        control_mode = self.config.default_control_mode.strip().lower()
+        if control_mode not in {"manual", "autonomous"}:
+            control_mode = "manual"
+        current_execution_mode = control_mode
+        self.left_image_pub = self.create_publisher(Image, "/robot/camera/left/image_raw", 5)
+        self.right_image_pub = self.create_publisher(Image, "/robot/camera/right/image_raw", 5)
+        self.odom_pub = self.create_publisher(Odometry, "/robot/odometry", 10)
+        self.imu_pub = self.create_publisher(Vector3Stamped, "/robot/imu/rpy", 10)
+        self.map_pub = self.create_publisher(RosOccupancyGrid, "/mapping/map", 5)
+        self.mapping_debug_pub = self.create_publisher(String, "/mapping/debug", 5)
+        self.perception_status_pub = self.create_publisher(String, "/perception/status", 5)
+        self.actuation_status_pub = self.create_publisher(String, "/actuation/status", 5)
+        self.scan_pub = self.create_publisher(LaserScan, "/robot/lidar/scan", 5)
+        self.create_subscription(Twist, "/teleop/cmd_vel_input", self.on_cmd_vel, 10)
+        self.create_subscription(Empty, "/teleop/lack_of_progress", self.on_lop, 10)
+        self.create_subscription(String, "/teleop/mode", self.on_mode, 10)
+        self.create_subscription(Bool, "/teleop/object_recognition_enabled", self.on_object_recognition, 10)
+        self.time_step_s = self.config.time_step_ms / 1000.0
+        self.command_timeout_steps = max(1, round(self.config.command_timeout_s / max(self.time_step_s, 1e-6)))
+        self.odom_every_steps = max(1, round(self.config.odom_publish_period_s / max(self.time_step_s, 1e-6)))
+        self.scan_every_steps = max(1, round(self.config.scan_publish_period_s / max(self.time_step_s, 1e-6)))
+        self.camera_every_steps = max(1, round(self.config.camera_publish_period_s / max(self.time_step_s, 1e-6)))
+        self.recognition_every_steps = max(
+            1,
+            round(self.config.object_recognition_period_s / max(self.time_step_s, 1e-6)),
+        )
+        self.last_manual_cmd_step = 0
+
+    def process_callbacks(self) -> None:
+        for _ in range(8):
+            rclpy.spin_once(self, timeout_sec=0.0)
+
+    def on_cmd_vel(self, msg: Twist) -> None:
+        global manual_linear, manual_angular
+        manual_linear = float(msg.linear.x)
+        manual_angular = float(msg.angular.z)
+        self.last_manual_cmd_step = step_counter
+
+    def on_lop(self, _: Empty) -> None:
+        if supervisor is not None:
+            supervisor.call_lack_of_progress()
+
+    def on_mode(self, msg: String) -> None:
+        global control_mode, manual_linear, manual_angular
+        mode = msg.data.strip().lower()
+        if mode in {"manual", "autonomous"}:
+            control_mode = mode
+            manual_linear = 0.0
+            manual_angular = 0.0
+            self.last_manual_cmd_step = step_counter
+
+    def on_object_recognition(self, msg: Bool) -> None:
+        global object_recognition_enabled, object_recognition_status, object_recognition_detection_count, object_recognition_counts
+        object_recognition_enabled = bool(msg.data)
+        object_recognition_detection_count = 0
+        object_recognition_counts = {}
+        object_recognition_status = (
+            "api ready"
+            if object_recognition_enabled and recognition_client is not None
+            else "off (API-only path configured)"
+        )
+
+    def active_manual_cmd(self) -> tuple[float, float]:
+        if step_counter - self.last_manual_cmd_step > self.command_timeout_steps:
+            return 0.0, 0.0
+        return manual_linear, manual_angular
+
+
+def numpy_to_image(frame: np.ndarray, frame_id: str) -> Image:
+    msg = Image()
+    msg.height = int(frame.shape[0])
+    msg.width = int(frame.shape[1])
+    msg.encoding = "bgra8"
+    msg.is_bigendian = False
+    msg.step = int(frame.shape[1] * frame.shape[2])
+    msg.data = frame.tobytes()
+    msg.header.frame_id = frame_id
+    return msg
+
+
+def update_game_information(score, time_value):
     global game_score, game_time
-
     game_score = score
-    game_time = time
-
-
-supervisor.add_listener(supervisor.Events.game_information, update_game_information)
+    game_time = time_value
 
 
 def delay(amount):
@@ -98,51 +208,296 @@ def distance_from(goal):
     return math.sqrt((goal[0] - localization.get_x()) ** 2 + (goal[1] - localization.get_z()) ** 2)
 
 
-origin = localization.get_x(), localization.get_z()
-occupancy_grid = OccupancyGrid(shape=(2000, 2000), spacing=400, origin=origin)
-lidar_processor = LidarDataProcessor(lidar, occupancy_grid)
-bonus_grid = BonusMap(occupancy_grid, origin)
-occupancy_viewer = OccupancyGridViewer(
-    occupancy_grid,
-    origin_position=occupancy_grid.world_to_grid(*origin)
-)
-
-
 def get_grid_position():
     return occupancy_grid.world_to_grid(localization.get_x(), localization.get_z())
 
 
-outer_radius = round(0.048 * occupancy_grid.spacing)
-outer_kernel = get_kernel(outer_radius)
-outer_grid = np.full(occupancy_grid.shape, True, dtype='uint8')
-inner_radius = round(0.0333 * occupancy_grid.spacing)
-inner_kernel = get_kernel(inner_radius)
-inner_grid = np.full(occupancy_grid.shape, True, dtype='uint8')
-
-stuck_mask = get_kernel(round(0.012 * occupancy_grid.spacing))
-
-visited_mask = get_kernel(round(0.008 * occupancy_grid.spacing))
-visited_grid = np.full(occupancy_grid.shape, False, dtype='uint8')
-
-hole_size = round(0.12 * occupancy_grid.spacing)
-hole_mask = np.ones((hole_size, hole_size), dtype='uint8')
-
-path_position = get_grid_position()
-continue_on_left = False
-should_stop_traversing = False
-
-
 def reset_path_position():
     global path_position, continue_on_left, should_stop_traversing
-
     path_position = get_grid_position()
     continue_on_left = False
     should_stop_traversing = True
 
 
-supervisor.add_listener(supervisor.Events.lack_of_progress, reset_path_position)
+def setup_runtime(node: LegacyBridgeNode) -> None:
+    global robot, supervisor, localization, controller, lidar, distance_sensors
+    global color_sensor, left_camera, right_camera, origin, occupancy_grid, lidar_processor
+    global bonus_grid, occupancy_viewer, outer_kernel, outer_grid, inner_kernel, inner_grid
+    global outer_radius, inner_radius, stuck_mask, visited_mask, visited_grid, hole_mask, path_position
+    global continue_on_left, should_stop_traversing, detected_signs, should_detect_victims
+    global game_score, game_time, start_time, step_counter, runtime_ready, raw_trail
+    global object_recognition_enabled, object_recognition_status, object_recognition_detection_count, object_recognition_counts, recognition_client
 
-detected_signs = []
+    start_time = ptime.time()
+    step_counter = 0
+    raw_trail.clear()
+    should_detect_victims = True
+    detected_signs = []
+    game_score = 0
+    game_time = -1
+    object_recognition_enabled = bool(node.config.object_recognition_enabled)
+    object_recognition_detection_count = 0
+    object_recognition_counts = {}
+    recognition_client = None
+    object_recognition_status = "off (API-only path configured)"
+    if node.config.object_recognition_api_url:
+        recognition_client = RemoteYoloApiClient(
+            node.config.object_recognition_api_url,
+            conf=node.config.object_recognition_conf,
+            device=node.config.object_recognition_device,
+            imgsz=node.config.object_recognition_imgsz,
+            timeout_s=node.config.object_recognition_api_timeout_s,
+            jpeg_quality=node.config.object_recognition_api_jpeg_quality,
+        )
+        if object_recognition_enabled:
+            object_recognition_status = "api ready"
+    robot = devices.Robot(time_step=node.config.time_step_ms)
+    supervisor = erebus.Supervisor(
+        emitter=devices.Emitter(robot, node.config.emitter_name),
+        receiver=devices.Receiver(robot, "receiver"),
+    )
+    localization = GPSInertialLocalization(
+        gps=devices.GPS(robot, node.config.gps_name),
+        inertial_unit=devices.InertialUnit(robot, node.config.imu_name),
+    )
+    controller = DifferentialController(
+        localization=localization,
+        left_wheel_motor=devices.Motor(robot, node.config.left_motor_name),
+        right_wheel_motor=devices.Motor(robot, node.config.right_motor_name),
+        axle_length=node.config.axle_length,
+        wheel_radius=node.config.wheel_radius,
+        max_velocity=node.config.max_motor_velocity,
+        drive_angle_tolerance=math.pi / 6,
+        turn_gain=10,
+    )
+    lidar = devices.Lidar(robot, node.config.lidar_name, max_range=0.24)
+    distance_sensors = [
+        devices.DistanceSensor(robot, "left dist sensor", offset=(-0.024, 0, -0.024)),
+        devices.DistanceSensor(robot, "right dist sensor", offset=(0.024, 0, -0.024)),
+        devices.DistanceSensor(robot, "front dist sensor", offset=(0, 0, -0.032)),
+    ]
+    color_sensor = devices.Camera(robot, "color sensor")
+    left_camera = devices.Camera(robot, node.config.left_camera_name, offset=(-0.02, 0, 0), time_step=64)
+    right_camera = devices.Camera(robot, node.config.right_camera_name, offset=(0.02, 0, 0), time_step=64)
+    runtime_ready = False
+    if raw_step() == -1:
+        raise SystemExit(0)
+    origin = localization.get_x(), localization.get_z()
+    occupancy_grid = OccupancyGrid(shape=(2000, 2000), spacing=400, origin=origin)
+    lidar_processor = LidarDataProcessor(lidar, occupancy_grid)
+    bonus_grid = BonusMap(occupancy_grid, origin)
+    occupancy_viewer = OccupancyGridViewer(
+        occupancy_grid,
+        origin_position=occupancy_grid.world_to_grid(*origin),
+    )
+    outer_radius = round(0.048 * occupancy_grid.spacing)
+    outer_kernel = get_kernel(outer_radius)
+    outer_grid = np.full(occupancy_grid.shape, True, dtype="uint8")
+    inner_radius = round(0.0333 * occupancy_grid.spacing)
+    inner_kernel = get_kernel(inner_radius)
+    inner_grid = np.full(occupancy_grid.shape, True, dtype="uint8")
+    stuck_mask = get_kernel(round(0.012 * occupancy_grid.spacing))
+    visited_mask = get_kernel(round(0.008 * occupancy_grid.spacing))
+    visited_grid = np.full(occupancy_grid.shape, False, dtype="uint8")
+    hole_size = round(0.12 * occupancy_grid.spacing)
+    hole_mask = np.ones((hole_size, hole_size), dtype="uint8")
+    path_position = get_grid_position()
+    continue_on_left = False
+    should_stop_traversing = False
+    supervisor.add_listener(supervisor.Events.game_information, update_game_information)
+    supervisor.add_listener(supervisor.Events.lack_of_progress, reset_path_position)
+    runtime_ready = True
+
+
+def raw_step():
+    global should_detect_victims, step_counter
+    bridge.process_callbacks()
+    if current_execution_mode == "autonomous" and control_mode == "manual":
+        raise ModeSwitchInterrupt
+    should_detect_victims = not should_detect_victims
+    result = robot.step()
+    if result != -1:
+        step_counter += 1
+        if runtime_ready:
+            supervisor.handle_received_data()
+            publish_runtime_state()
+    return result
+
+
+def build_map_message():
+    data = np.full(occupancy_grid.shape, -1, dtype=np.int16)
+    data[occupancy_grid.occupancy == occupancy_grid.free] = 0
+    data[occupancy_grid.occupancy == occupancy_grid.occupied] = 100
+    grid = RosOccupancyGrid()
+    grid.header.stamp = bridge.get_clock().now().to_msg()
+    grid.header.frame_id = "map"
+    grid.info.resolution = 1.0 / float(occupancy_grid.spacing)
+    grid.info.width = occupancy_grid.shape[0]
+    grid.info.height = occupancy_grid.shape[1]
+    origin_x, origin_y = occupancy_grid.grid_to_world(0, occupancy_grid.shape[1] - 1)
+    grid.info.origin.position.x = float(origin_x)
+    grid.info.origin.position.y = float(origin_y)
+    grid.info.origin.orientation.w = 1.0
+    grid.data = np.flip(data.T, axis=0).reshape(-1).astype(int).tolist()
+    return grid
+
+
+def build_scan_payload(range_image):
+    finite = np.isfinite(range_image)
+    ranges = np.min(np.where(finite, range_image, np.inf), axis=0).astype(np.float32)
+    scan = LaserScan()
+    scan.header.stamp = bridge.get_clock().now().to_msg()
+    scan.header.frame_id = "base_link"
+    scan.angle_min = -lidar.hor_fov * 0.5
+    scan.angle_max = lidar.hor_fov * 0.5
+    scan.angle_increment = lidar.hor_fov / max(1, lidar.hor_res - 1)
+    scan.range_min = 0.0
+    scan.range_max = float(lidar.max_range)
+    scan.ranges = ranges.tolist()
+    indices = {
+        "front": len(ranges) // 2,
+        "front_right": int(len(ranges) * 0.625) % len(ranges),
+        "right": int(len(ranges) * 0.75) % len(ranges),
+        "rear_right": int(len(ranges) * 0.875) % len(ranges),
+        "rear": 0,
+        "rear_left": int(len(ranges) * 0.125) % len(ranges),
+        "left": int(len(ranges) * 0.25) % len(ranges),
+        "front_left": int(len(ranges) * 0.375) % len(ranges),
+    }
+    directional_ranges = {
+        key: (float(ranges[idx]) if np.isfinite(ranges[idx]) else None)
+        for key, idx in indices.items()
+    }
+    points = []
+    if len(ranges) > 0:
+        sample_count = min(360, len(ranges))
+        indices = np.linspace(0, len(ranges) - 1, sample_count, dtype=int)
+    else:
+        indices = np.array([], dtype=int)
+    angles = np.linspace(scan.angle_min, scan.angle_max, len(ranges))
+    for idx in indices:
+        distance = ranges[idx]
+        angle = angles[idx]
+        if not np.isfinite(distance):
+            continue
+        points.append([float(distance * math.cos(angle)), float(distance * math.sin(angle))])
+    return scan, directional_ranges, points
+
+
+def run_object_recognition() -> None:
+    global object_recognition_status, object_recognition_detection_count, object_recognition_counts
+    if not object_recognition_enabled:
+        object_recognition_status = "off (API-only path configured)"
+        object_recognition_detection_count = 0
+        object_recognition_counts = {}
+        return
+    if recognition_client is None:
+        object_recognition_status = "enabled but API URL missing"
+        object_recognition_detection_count = 0
+        object_recognition_counts = {}
+        return
+
+    try:
+        counts: dict[str, int] = {}
+        total = 0
+        for side, camera in (("left", left_camera), ("right", right_camera)):
+            detections, _ = recognition_client.predict(camera.get_image())
+            counts[side] = len(detections)
+            total += len(detections)
+        object_recognition_counts = counts
+        object_recognition_detection_count = total
+        object_recognition_status = f"api on | det {total}"
+    except Exception as exc:
+        object_recognition_status = f"api error: {exc}"
+        object_recognition_detection_count = 0
+        object_recognition_counts = {}
+
+
+def publish_runtime_state():
+    position = localization.get_xyz()
+    yaw = localization.get_yaw()
+    raw_trail.append((float(position[0]), float(position[2])))
+    left_velocity, right_velocity = controller.get_velocities()
+    linear_velocity = bridge.config.wheel_radius * (left_velocity + right_velocity) * 0.5
+    angular_velocity = bridge.config.wheel_radius * (right_velocity - left_velocity) / bridge.config.axle_length
+    stamp = bridge.get_clock().now().to_msg()
+
+    if step_counter == 1 or step_counter % bridge.odom_every_steps == 0:
+        odom = Odometry()
+        odom.header.stamp = stamp
+        odom.header.frame_id = "map"
+        odom.child_frame_id = "base_link"
+        odom.pose.pose.position.x = float(position[0])
+        odom.pose.pose.position.y = float(position[2])
+        qx, qy, qz, qw = quaternion_from_yaw(float(yaw))
+        odom.pose.pose.orientation.x = qx
+        odom.pose.pose.orientation.y = qy
+        odom.pose.pose.orientation.z = qz
+        odom.pose.pose.orientation.w = qw
+        odom.twist.twist.linear.x = float(linear_velocity)
+        odom.twist.twist.angular.z = float(angular_velocity)
+        bridge.odom_pub.publish(odom)
+
+        imu_msg = Vector3Stamped()
+        imu_msg.header.stamp = stamp
+        imu_msg.header.frame_id = "base_link"
+        imu_msg.vector.x = float(localization.get_roll())
+        imu_msg.vector.y = float(localization.get_pitch())
+        imu_msg.vector.z = float(yaw)
+        bridge.imu_pub.publish(imu_msg)
+
+    if step_counter == 1 or step_counter % bridge.camera_every_steps == 0:
+        bridge.left_image_pub.publish(numpy_to_image(left_camera.get_image(), "camera_left"))
+        bridge.right_image_pub.publish(numpy_to_image(right_camera.get_image(), "camera_right"))
+    if step_counter == 1 or step_counter % bridge.recognition_every_steps == 0:
+        run_object_recognition()
+
+    range_image = lidar.get_range_image()
+    scan, directional_ranges, lidar_points = build_scan_payload(range_image)
+    if step_counter == 1 or step_counter % bridge.scan_every_steps == 0:
+        bridge.scan_pub.publish(scan)
+        bridge.map_pub.publish(build_map_message())
+
+    mapping_payload = {
+        "mode": control_mode,
+        "trail_raw": [[float(x), float(y)] for x, y in list(raw_trail)],
+        "lidar_directional_ranges": directional_ranges,
+        "lidar_points": lidar_points,
+        "lidar_range_max_m": float(lidar.max_range),
+        "path_position": list(path_position) if path_position is not None else None,
+        "target_world": list(occupancy_grid.grid_to_world(*path_position)) if path_position is not None else None,
+        "game_score": game_score,
+        "game_time": game_time,
+    }
+    bridge.mapping_debug_pub.publish(String(data=json.dumps(mapping_payload)))
+
+    perception_payload = {
+        "left_camera_shape": [int(left_camera.width), int(left_camera.height)],
+        "right_camera_shape": [int(right_camera.width), int(right_camera.height)],
+        "lidar_valid_count": int(np.count_nonzero(np.isfinite(range_image))),
+        "lidar_front_range": directional_ranges.get("front"),
+        "yolo_status": (
+            object_recognition_status
+        ),
+        "yolo_api_url": bridge.config.object_recognition_api_url,
+        "object_recognition_enabled": object_recognition_enabled,
+        "object_recognition_detection_count": object_recognition_detection_count,
+        "object_recognition_counts": object_recognition_counts,
+        "game_score": game_score,
+        "game_time": game_time,
+    }
+    bridge.perception_status_pub.publish(String(data=json.dumps(perception_payload)))
+
+    active_linear, active_angular = bridge.active_manual_cmd()
+    actuation_payload = {
+        "mode": control_mode,
+        "linear_x": float(active_linear if control_mode == "manual" else linear_velocity),
+        "angular_z": float(active_angular if control_mode == "manual" else angular_velocity),
+        "autonomous": control_mode == "autonomous",
+        "mirror_reverse_steering": False,
+        "lop_count": 0,
+    }
+    bridge.actuation_status_pub.publish(String(data=json.dumps(actuation_payload)))
 
 
 def call_sign(results):
@@ -378,11 +733,10 @@ def update_visited_grid(grid_position):
     region[visited_mask.astype(bool)] = True
 
 
-def step(should_update_visited_grid=True):
+def step(should_update_visited_grid=True, allow_hazard_recovery=True):
     supervisor.request_game_information()
     if raw_step() == -1:
         return False
-    supervisor.handle_received_data()
     grid_position = get_grid_position()
     lidar_scan = lidar_processor.get_lidar_scan(localization.get_yaw())
     active_area = occupancy_grid.update_region(lidar_scan, grid_position)
@@ -392,19 +746,20 @@ def step(should_update_visited_grid=True):
     if should_update_visited_grid:
         update_visited_grid(path_position)
 
-    for sensor in distance_sensors:
-        if sensor.get_distance() > 0.1:
-            position = rotate_point(sensor.offset, yaw=localization.get_yaw()) + localization.get_xyz()
-            position = origin + (np.array([position[0], position[2]]) - origin + 0.06) // 0.12 * 0.12
-            update_outer_grid(occupancy_grid.world_to_grid(*position), hole_mask)
-            update_inner_grid(occupancy_grid.world_to_grid(*position), hole_mask)
-            bonus_grid.mark_tile(position, bonus_grid.hole)
+    if allow_hazard_recovery:
+        for sensor in distance_sensors:
+            if sensor.get_distance() > 0.1:
+                position = rotate_point(sensor.offset, yaw=localization.get_yaw()) + localization.get_xyz()
+                position = origin + (np.array([position[0], position[2]]) - origin + 0.06) // 0.12 * 0.12
+                update_outer_grid(occupancy_grid.world_to_grid(*position), hole_mask)
+                update_inner_grid(occupancy_grid.world_to_grid(*position), hole_mask)
+                bonus_grid.mark_tile(position, bonus_grid.hole)
 
-            controller.reverse()
-            for _ in range(8):
-                if raw_step() == -1:
-                    return False
-            controller.stop()
+                controller.reverse()
+                for _ in range(8):
+                    if raw_step() == -1:
+                        return False
+                controller.stop()
 
     ground_type = bonus_grid.get_ground_type(get_ground_color())
     if ground_type != bonus_grid.free:
@@ -413,7 +768,19 @@ def step(should_update_visited_grid=True):
         if distance_from(position) < 0.05:
             bonus_grid.mark_tile(position, ground_type)
     occupancy_viewer.update(grid_position, path_position)
+    publish_runtime_state()
     return True
+
+
+def manual_step():
+    linear, angular = bridge.active_manual_cmd()
+    half_axle = bridge.config.axle_length * 0.5
+    left = (linear - angular * half_axle) / bridge.config.wheel_radius
+    right = (linear + angular * half_axle) / bridge.config.wheel_radius
+    left = clamp(left, -bridge.config.max_motor_velocity, bridge.config.max_motor_velocity)
+    right = clamp(right, -bridge.config.max_motor_velocity, bridge.config.max_motor_velocity)
+    controller.set_velocities(left, right)
+    return step(should_update_visited_grid=False, allow_hazard_recovery=False)
 
 
 def search_frontier_bfs(start):
@@ -701,7 +1068,7 @@ def exit_maze():
     exit()
 
 
-def main():
+def autonomous_main():
     global path_position, continue_on_left
 
     while step():
@@ -775,5 +1142,35 @@ def main():
             reset_path_position()
 
 
-if __name__ == '__main__':
-    main()
+def run_manual_mode():
+    global current_execution_mode
+    current_execution_mode = "manual"
+    while control_mode == "manual":
+        if not manual_step():
+            break
+    controller.stop()
+
+
+def main(args: list[str] | None = None):
+    global bridge, current_execution_mode
+    rclpy.init(args=args)
+    bridge = LegacyBridgeNode()
+    try:
+        setup_runtime(bridge)
+        while True:
+            if control_mode == "manual":
+                run_manual_mode()
+                continue
+            current_execution_mode = "autonomous"
+            try:
+                autonomous_main()
+                break
+            except ModeSwitchInterrupt:
+                controller.stop()
+                continue
+    finally:
+        if controller is not None:
+            controller.stop()
+        if bridge is not None:
+            bridge.destroy_node()
+        rclpy.shutdown()

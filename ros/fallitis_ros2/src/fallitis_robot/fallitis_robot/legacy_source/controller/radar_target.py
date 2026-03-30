@@ -12,18 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ctypes
-import os
-import sys
 
-if sys.platform == 'linux' or sys.platform == 'linux2':
-    path = os.path.join('lib', 'controller', 'libController.so')
-elif sys.platform == 'win32':
-    path = os.path.join('lib', 'controller', 'Controller.dll')
-elif sys.platform == 'darwin':
-    path = os.path.join('Contents', 'lib', 'controller', 'libController.dylib')
-
-wb = ctypes.cdll.LoadLibrary(os.path.join('/usr/local/webots/', path))
-
-if sys.platform == 'win32':
-    ctypes.cdll.LoadLibrary(os.path.join(os.environ['WEBOTS_HOME'], 'lib', 'controller', 'generic_robot_window.dll'))
+class RadarTarget:
+    def __init__(self, distance: float, receiver_power: float, speed: float, azimuth: float):
+        self.distance = distance
+        self.receiver_power = receiver_power
+        self.speed = speed
+        self.azimuth = azimuth
