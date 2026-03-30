@@ -1,3 +1,51 @@
+fallitis_actuation:
+  ros__parameters:
+    command_timeout_s: 0.35
+    mirror_reverse_steering: false
+    status_period_s: 0.50
+
+fallitis_perception:
+  ros__parameters:
+    annotation_period_s: 0.40
+    model_conf: 0.65
+    model_device: ""
+    model_imgsz: 640
+    yolo_api_enabled: true
+    yolo_api_url: "http://10.0.2.2:8000/predict"
+    yolo_api_timeout_s: 2.0
+    yolo_api_jpeg_quality: 80
+
+fallitis_mapping:
+  ros__parameters:
+    map_width_cells: 2000
+    map_height_cells: 2000
+    map_spacing: 400
+    lidar_max_range_m: 0.24
+    map_yaw_offset_rad: 0.0
+    wheel_radius: 0.02
+    axle_length: 0.05
+    expected_dt_s: 0.032
+    gps_filter_window: 8
+    gps_filter_window_min: 2
+    gps_filter_window_max: 60
+    trail_length: 300
+    spawn_anchor_sample_count: 8
+    spawn_snap_step_m: 0.12
+    robot_reset_jump_threshold_m: 0.25
+    lidar_close_range_m: 0.12
+    lidar_stationary_range_eps_m: 0.003
+    lidar_downsample: 4
+    linear_stationary_threshold_m_s: 0.002
+    linear_motion_threshold_m_s: 0.010
+    angular_stationary_threshold_rad_s: 0.05
+    angular_motion_threshold_rad_s: 0.20
+    imu_yaw_rate_stationary_threshold_rad_s: 0.08
+    lidar_static_confidence_threshold: 0.85
+    predictive_index_threshold: 0.55
+    pose_history_size: 128
+    pose_sync_tolerance_s: 0.20
+    debug_publish_period_s: 0.50
+
 fallitis_webots_robot:
   ros__parameters:
     time_step_ms: 32

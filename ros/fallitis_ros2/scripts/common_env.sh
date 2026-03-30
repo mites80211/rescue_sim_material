@@ -2,6 +2,11 @@
 
 set -e
 
+workspace_root() {
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)"
+  dirname "$script_dir"
+}
+
 find_ros_setup() {
   if [ -n "${ROS_SETUP_FILE:-}" ] && [ -f "${ROS_SETUP_FILE}" ]; then
     printf '%s\n' "$ROS_SETUP_FILE"
@@ -54,12 +59,12 @@ source_ros_setup() {
 }
 
 source_workspace_setup() {
-  workspace_root="${1:-$HOME/fallitis_ros2}"
-  workspace_install="$workspace_root/install"
+  workspace_root_dir="${1:-$HOME/fallitis_ros2}"
+  workspace_install="$workspace_root_dir/install"
   workspace_setup="$workspace_install/setup.sh"
   if [ ! -f "$workspace_setup" ]; then
     echo "Workspace setup not found: $workspace_setup" >&2
-    echo "Run: cd $workspace_root && ./scripts/build_workspace.sh" >&2
+    echo "Run: cd $workspace_root_dir && ./scripts/build_workspace.sh" >&2
     exit 1
   fi
 
@@ -87,5 +92,5 @@ source_workspace_setup() {
     done
   done
 
-  unset workspace_root workspace_install workspace_setup prefix site_packages
+  unset workspace_root_dir workspace_install workspace_setup prefix site_packages
 }

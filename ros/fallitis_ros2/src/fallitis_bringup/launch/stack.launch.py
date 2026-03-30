@@ -29,6 +29,7 @@ def generate_launch_description() -> LaunchDescription:
             Node(
                 package="fallitis_web",
                 executable="web_server",
+                parameters=[str(config)],
                 output="screen",
             ),
         ]

@@ -4,14 +4,12 @@ set -e
 export FALLITIS_WEB_PORT="${FALLITIS_WEB_PORT:-8080}"
 
 . "$(dirname "$0")/common_env.sh"
+WORKSPACE_ROOT="$(workspace_root "$0")"
 source_ros_setup
-source_workspace_setup "$HOME/fallitis_ros2"
-WEB_PARAMS="${WEB_PARAMS:-$HOME/fallitis_ros2/install/fallitis_bringup/share/fallitis_bringup/config/stack.yaml}"
-if [ ! -f "$WEB_PARAMS" ]; then
-  WEB_PARAMS="$HOME/fallitis_ros2/install/share/fallitis_bringup/config/stack.yaml"
-fi
-if [ ! -f "$WEB_PARAMS" ]; then
-  WEB_PARAMS="$HOME/fallitis_ros2/src/fallitis_bringup/config/stack.yaml"
-fi
+source_workspace_setup "$WORKSPACE_ROOT"
+pkill -f 'ros2 launch fallitis_bringup stack.launch.py' 2>/dev/null || true
 pkill -f '/fallitis_web/web_server' 2>/dev/null || true
-exec ros2 run fallitis_web web_server --ros-args --params-file "$WEB_PARAMS" "$@"
+pkill -f '/fallitis_perception/perception_node' 2>/dev/null || true
+pkill -f '/fallitis_mapping/mapping_node' 2>/dev/null || true
+pkill -f '/fallitis_actuation/actuation_node' 2>/dev/null || true
+exec ros2 launch fallitis_bringup stack.launch.py "$@"
